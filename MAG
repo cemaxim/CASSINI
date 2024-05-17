@@ -1,0 +1,25 @@
+import pandas as pd
+import glob
+import matplotlib.pyplot as plt
+
+
+KSM_files = glob.glob('/media/padelamere/DATAPART1/CAPS/MAG/COMAG_4002/DATA/**/*KSM_1M.TAB')
+
+li = []
+
+for name in KSM_files:
+    df = pd.read_csv(name, index_col = False, delim_whitespace=True)  
+    df.columns = ['TIME','BX','BY','BZ','BTOTAL','X','Y','Z','LOCAL HOUR','NPTS']
+    df['TIME'] = pd.to_datetime(df['TIME'])
+    df = df.set_index(['TIME'])
+    li.append(df)
+
+df = pd.concat(li)
+
+start = '2004-05-14 00:00:31'
+end = '2004-05-14 00:05:31'
+
+position = df[['X','Y','Z']][start:end]
+print(position)
+
+df.plot(x = 'X',y = 'Y')
