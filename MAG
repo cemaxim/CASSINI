@@ -23,3 +23,12 @@ position = df[['X','Y','Z']][start:end]
 print(position)
 
 df.plot(x = 'X',y = 'Y')
+
+x = df['X'].to_numpy()
+y = df['Y'].to_numpy()
+z = df['Z'].to_numpy()
+
+ax = plt.figure().add_subplot(projection='3d')
+ax.plot(x,y,z)
+plt.show()
+
