@@ -16,8 +16,41 @@ import os
 import scipy.integrate as integrate
 from scipy.signal import find_peaks
 
-def get_data(orbit_n = None, start_time = None, end_time = None): #get data from start and end time of orbit(s)
-    #start = ORBIT(orbit_i)[0]
+def get_data(orbit_n = None, start_time = None, end_time = None): 
+    """
+    Read in magnetometer and position data of an orbit or between a start and end time
+
+    Parameters
+    ----------
+    orbit_n : int, optional
+        Cassini's orbit number [0-120]. The default is None.
+    start_time : str, optional
+        Start time [Y-m-d H:M:S]. The default is None.
+    end_time : str, optional
+        End time [Y-m-d H:M:S]. The default is None.
+
+    Returns
+    -------
+    time : list
+        Start and end datetimes as strings.
+    df : pandas.core.frame.DataFrame
+        Dataframe containing 1 minute averaged magnetometer data.  
+            R:
+                Radial Saturn-Cassini distance(Rs)
+            BX, BY, BZ:
+                X, Y, and Z components of magetic-field(nT) in KSM cartesian coordinate system: X points from Saturn to Sun, the X-Z
+                plane contains Saturn's centered magetic dipole axis, and Y completes the right handed set.
+            BR, BPHI, BTHETA:
+                R, Phi, and Theta components of magnetic-field(nT) in KRTP spherical coordinate system: R points from Saturn to Cassini,
+                Phi is parallel to Saturn's equator and Theta completes the right handed set.
+           x, y, z:
+               Cassini's Position in KSM coordinates
+            ID:
+                Boundary condition IDs. 1=magnetosphere; 2=sheath; -1=solar wind
+    bc_df : TYPE
+        Boundary conditions dataframe. 
+
+    """
     if orbit_n is None:
         start = start_time
         end = end_time
@@ -206,7 +239,6 @@ def CWT(data, dt, n=None, Rs=None, plot=True):
     freq = str(dt)+'min'
     data = data.asfreq(freq)
     data = data.interpolate()
-    # et = (data.index.to_series() - data.index.min()).dt.total_seconds() #elapsed time in seconds dataframe 
     t = data.index    
     
   
@@ -248,7 +280,6 @@ def CWT(data, dt, n=None, Rs=None, plot=True):
     # sig95 = power / sig95
     
     if plot is True:
-        #plt.figure()
         fig, axs = plt.subplots(2,1, sharex=True, figsize=(9,6), layout='constrained')
         fig.supxlabel('Date-Time')
         fig.suptitle('$b_\perp$ Wavelet Power Spectrum (Orbit '+str(n)+')')
