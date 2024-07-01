@@ -213,7 +213,7 @@ def MFA_plot(mfa_data):
     fig.tight_layout()
 
 
-def CWT(data, dt, n=None, Rs=None, plot=True):
+def CWT(data, dt, axs, n=None, Rs=None, plot=True):
     """
     Performs a continuous wavelet transfrom anaylsis on a signal.
 
@@ -264,7 +264,7 @@ def CWT(data, dt, n=None, Rs=None, plot=True):
     period = (1/freqs)/60 #hours
     coi = coi**-1
     
-    "Remove Cone of Infuluence"
+    "Remove cone of infuluence"
     for i, col in enumerate(power.T):
             col_num = len(col) - i
             coi_start_index = min(range(len(freqs)),
@@ -283,25 +283,26 @@ def CWT(data, dt, n=None, Rs=None, plot=True):
         fig, axs = plt.subplots(2,1, sharex=True, figsize=(9,6), layout='constrained')
         fig.supxlabel('Date-Time')
         fig.suptitle('$b_\perp$ Wavelet Power Spectrum (Orbit '+str(n)+')')
-        axs[0].set_title('[60-minute rolling mean, 15-minute sampling interval]', fontsize=10)
-        axs[0].plot(t,data)
-        axs[0].set_ylabel('Magnitude (nT)')
-        axs[1].pcolormesh(t,period,power, cmap='turbo')
-        #axs[1].contour(t,period,sig95)
-        axs[1].set_yscale('log')
-        axs[1].set_ylim(period.min(),period.max())
-        axs[1].set_ylabel('Period (hr)')
-        axs[1].plot([t.min(),t.max()],[10,10],'--', color='white',linewidth=0.25)
-        axs[1].plot([t.min(),t.max()],[10.7,10.7],'--', color='white',linewidth=1)
-        axs[1].plot([t.min(),t.max()],[15,15],'--',color='white',linewidth=0.25)
-        axs[1].plot([t.min(),t.max()],[30,30],'--',color='white',linewidth=0.25)
         plt.xticks(rotation=30, horizontalalignment='right')
-        plt.grid('--', linewidth=0.25)
-        plt.colorbar(axs[1].pcolormesh(t,period,power, cmap='turbo'), label='($nT^2$/Hz)')
+    axs[0].set_title('['+str(dt)+'-minute sampling interval]', fontsize=10)
+    axs[0].plot(t,data)
+    axs[0].set_ylabel('Magnitude (nT)')
+    axs[1].pcolormesh(t,period,power, cmap='turbo')
+    #axs[1].contour(t,period,sig95)
+    axs[1].set_yscale('log')
+    axs[1].set_ylim(period.min(),period.max())
+    axs[1].set_ylabel('Period (hr)')
+    axs[1].plot([t.min(),t.max()],[10,10],'--', color='white',linewidth=0.25)
+    axs[1].plot([t.min(),t.max()],[10.7,10.7],'--', color='white',linewidth=1)
+    axs[1].plot([t.min(),t.max()],[15,15],'--',color='white',linewidth=0.25)
+    axs[1].plot([t.min(),t.max()],[30,30],'--',color='white',linewidth=0.25)
+    
+    plt.grid('--', linewidth=0.25)
+    plt.colorbar(axs[1].pcolormesh(t,period,power, cmap='turbo'), label='($nT^2$/Hz)')
     return freqs, power
 
 
-def PSD(freqs, power):
+def PSD(freqs, power, axs, plot=True):
     psd = np.zeros(len(freqs))
     power = np.nan_to_num(power)
     for i in range(0, len(freqs)):
@@ -309,20 +310,23 @@ def PSD(freqs, power):
     
     peaks, _ = find_peaks(psd)
     period = (1/freqs)/60
-    max_period = period[psd.argmax()]
-    print('T:'+str(max_period))
+    # fund_period = period[psd.argmax()]
+    fund_period = 10.7
+    print('T:'+str(fund_period))
     
-    fig2, axs = plt.subplots()
+    if plot is True:
+        fig, axs = plt.subplots()
     axs.loglog(period, psd)
     for i in range(1,5):
-        axs.loglog([max_period/i,max_period/i],[np.min(psd),np.max(psd)],':', label='m='+str(i))
+        axs.loglog([fund_period/i,fund_period/i],[np.min(psd),np.max(psd)],':', label='m='+str(i))
+    # axs.loglog([max_period,max_period],[np.min(psd),np.max(psd)],':', label='m='+str(1))
     axs.set_title('Power Spectral Density')
     axs.set_xlabel('Period (Hr)')
     axs.set_ylabel('PSD ($nT^2$/Hz)')
     axs.legend()
     
     
-def plots(R_min=25, win=60, dt=15, n = None, start_time=None, end_time=None):
+def plots(axs, R_min=25, win=30, dt=15, n = None, start_time=None, end_time=None):
     
     # folder_path = '/home/cemaxim/CAS/CWTs/'
     # if not os.path.exists(folder_path):
@@ -333,12 +337,24 @@ def plots(R_min=25, win=60, dt=15, n = None, start_time=None, end_time=None):
     # plt.savefig(folder_path+str(n)+'_ORBIT')
     mfa_data = MFA(data, win, R_min)
     # MFA_plot(mfa_data)
-    CWT(mfa_data.B_PERP, dt, n)    
+    CWT(mfa_data.B_PERP, dt, axs, n)    
     # plt.savefig(folder_path+str(n)+'_CWT')
-    freqs , power = CWT(mfa_data.B_PERP, n, dt, plot=False)
-    PSD(freqs,power)
+    freqs , power = CWT(mfa_data.B_PERP, dt, axs, n, plot=False)
+    PSD(freqs,power,axs)
     # plt.savefig(folder_path+str(n)+'_PSD')
 
+def subplots(R_min=25, win=30, dt=15, n = None, start_time=None, end_time=None):
+    time , data, id = get_data(n,start_time,end_time)
+    mfa = MFA(data, win, R_min)
+    
+    fig, ax = plt.subplots(3, layout='constrained', figsize = (9,6))
+    fig.suptitle('$b_\perp$ Wavelet Power Spectrum (Orbit '+str(n)+')')
+    freqs, power = CWT(mfa.B_PERP, 15, ax, plot=False)
+    
+    ax[1].sharex(ax[0])
+    # ax[1].tick_params(labelrotation=30)
+    ax[0].tick_params(labelbottom=False)
+    PSD(freqs, power, ax[2], plot=False)
 
 def model_wave(n,T1,T2,T3):
     data = get_data(n)[1]
@@ -356,3 +372,4 @@ def model_wave(n,T1,T2,T3):
     wave = pd.DataFrame(data=y,index=t)
     wave.plot()
     return wave
+
