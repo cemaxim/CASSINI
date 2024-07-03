@@ -8,6 +8,8 @@ Created on Thu May 23 09:40:26 2024
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.markers import MarkerStyle
+import matplotlib.dates as mdates
+import matplotlib.colors as mcolors
 import numpy as np
 from SPICE_POS import SPICE_POS
 from CAS_ORBITS import ORBIT
@@ -15,6 +17,7 @@ import pycwt as wavelet
 import os
 import scipy.integrate as integrate
 from scipy.signal import find_peaks
+from scipy.signal import peak_prominences
 
 def get_data(orbit_n = None, start_time = None, end_time = None): 
     """
@@ -47,7 +50,7 @@ def get_data(orbit_n = None, start_time = None, end_time = None):
                Cassini's Position in KSM coordinates
             ID:
                 Boundary condition IDs. 1=magnetosphere; 2=sheath; -1=solar wind
-    bc_df : TYPE
+    ids : TYPE
         Boundary conditions dataframe. 
 
     """
@@ -61,15 +64,15 @@ def get_data(orbit_n = None, start_time = None, end_time = None):
     time = [start, end]
     mag_df = pd.read_pickle("/home/cemaxim/pickles/MAG_DF.pkl")
     mag_df = mag_df[time[0] : time[1]]
-    bc_df = pd.read_pickle('/home/cemaxim/pickles/BC_ID.pkl')
-    bc_df = bc_df.drop(bc_df.loc[bc_df.ID ==-2].index)
-    df = SPICE_POS(mag_df,time)
-    df = pd.merge_asof(df, bc_df, left_index=True, right_index=True, direction='backward')
-    df.insert(0,'R',np.sqrt(df.x**2 + df.y**2 + df.z**2))
-    return time, df, bc_df
+    ids = pd.read_pickle('/home/cemaxim/pickles/BC_ID.pkl')
+    ids = ids.drop(ids.loc[ids.ID ==-2].index)
+    data = SPICE_POS(mag_df,time)
+    data = pd.merge_asof(data, ids, left_index=True, right_index=True, direction='backward')
+    data.insert(0,'R',np.sqrt(data.x**2 + data.y**2 + data.z**2))
+    return time, data, ids
 
 
-def plot_orbit(data, id, R_min, n, time):
+def plot_orbit(data, ids, R_min, n, time, plot=True, axs=None):
     """
     Plots orbit of Cassini spacecraft around Saturn.
 
@@ -77,7 +80,7 @@ def plot_orbit(data, id, R_min, n, time):
     ----------
     data : pandas.core.frame.DataFrame
         Dataframe with Cassini's radial distance from Saturn in Rs and datetime index.
-    id : pandas.core.frame.DataFrame
+    ids : pandas.core.frame.DataFrame
         Dataframe with boundary condition ids and datetime index.
     R_min : int
         Highlight orbit outside of specified radial distance.
@@ -91,42 +94,43 @@ def plot_orbit(data, id, R_min, n, time):
     None.
 
     """
-    fig, axs = plt.subplots(figsize=(6,6))  
-    for i in range(len(id.index)-1):
+    if plot is True:
+        fig, axs = plt.subplots(figsize=(6,6))  
+    for i in range(len(ids.index)-1):
         t = data.index
-        t1 = id.index[i]
-        t2 = id.index[i+1]
+        t1 = ids.index[i]
+        t2 = ids.index[i+1]
         wh = (t>t1) & (t<t2)
         x = data.iloc[wh]['x'].to_numpy()
         y = data.iloc[wh]['y'].to_numpy()
         
-        if id.iloc[i]['ID'] == -1:
+        if ids.iloc[i]['ID'] == -1:
             clr = '-r'
             # label = 'solar wind'
-        if id.iloc[i]['ID'] == 2:
+        if ids.iloc[i]['ID'] == 2:
             clr = 'lime'
             # label = 'sheath'
-        if id.iloc[i]['ID'] == 1:
+        if ids.iloc[i]['ID'] == 1:
             clr = '-b'
             # label = 'magnetosphere'
-        axs.plot(x, y, clr, linestyle=':')
-        axs.set_xlabel('x ($R_S$)')
-        axs.set_ylabel('y ($R_S$)')
-        axs.plot(0,0,markersize = 15, color = 'black', markerfacecoloralt='white',marker=MarkerStyle("o", fillstyle='left'))
-        plt.gca().set_aspect('equal')
-        axs.grid(True, linestyle=':')
-        axs.set_title('Cassini Orbit '+str(n)+'\n['+str(time[0])+' to '+str(time[1])+']')        
-    data = data.loc[(data.R > R_min)]
-    axs.plot(data.x.values,data.y.values,'-b', label='$R \geq$'+str(R_min))
-    fig.tight_layout()
-    plt.legend()
+        axs.plot(x, y, clr)#, linestyle=':')
+    axs.set_xlabel('x ($R_S$)')
+    axs.set_ylabel('y ($R_S$)')
+    axs.plot(0,0,markersize = 15, color = 'black', markerfacecoloralt='white',marker=MarkerStyle("o", fillstyle='left'))
+    plt.gca().set_aspect('equal')
+    axs.grid(True, linestyle=':')
+    axs.set_title('Cassini Orbit '+str(n)+'\n['+str(time[0])+' to '+str(time[1])+']')        
+    # data = data.loc[(data.R > R_min)]
+    # axs.plot(data.x.values,data.y.values,'-b', label='$R \geq$'+str(R_min))
+    # fig.tight_layout()
+    # plt.legend()
 
 def save_orbits(n):
     folder_path = '/home/cemaxim/CAS/ORBITS'
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)    
-        time, data, id = get_data(n)
-        plot_orbit(data,id,25,n,time)     
+        time, data, ids = get_data(n)
+        plot_orbit(data,ids,25,n,time)     
         plt.savefig('/home/cemaxim/CAS/ORBITS/'+str(n))
 
         
@@ -166,7 +170,7 @@ def MFA(data, win, R_min=None):
         Dataframe with mean-field-aligned perturbation components and datetime index.
 
     """
-    data = data.loc[(data.R > R_min) & (data.ID ==1)]
+    data = data.loc[(data.R > R_min)] #& (data.ID ==1)]
     means = pd.DataFrame({'BX': data.BX.rolling(win,center=True).mean(),
                           'BY': data.BY.rolling(win,center=True).mean(),
                           'BZ': data.BZ.rolling(win,center=True).mean()})
@@ -213,7 +217,7 @@ def MFA_plot(mfa_data):
     fig.tight_layout()
 
 
-def CWT(data, dt, axs, n=None, Rs=None, plot=True):
+def CWT(data, dt, n=None, Rs=None, plot=True, axs=None):
     """
     Performs a continuous wavelet transfrom anaylsis on a signal.
 
@@ -287,8 +291,11 @@ def CWT(data, dt, axs, n=None, Rs=None, plot=True):
     axs[0].set_title('['+str(dt)+'-minute sampling interval]', fontsize=10)
     axs[0].plot(t,data)
     axs[0].set_ylabel('Magnitude (nT)')
-    axs[1].pcolormesh(t,period,power, cmap='turbo')
+    # power = np.log(power)
+    wh =np.logical_not(np.isnan(power))
+    axs[1].pcolormesh(t,period,power, cmap = 'turbo')#, norm=mcolors.LogNorm(vmin=power[wh].min(), vmax=power[wh].max()), cmap='turbo')
     #axs[1].contour(t,period,sig95)
+    axs[1].set_xlabel('Datetime')
     axs[1].set_yscale('log')
     axs[1].set_ylim(period.min(),period.max())
     axs[1].set_ylabel('Period (hr)')
@@ -298,63 +305,53 @@ def CWT(data, dt, axs, n=None, Rs=None, plot=True):
     axs[1].plot([t.min(),t.max()],[30,30],'--',color='white',linewidth=0.25)
     
     plt.grid('--', linewidth=0.25)
-    plt.colorbar(axs[1].pcolormesh(t,period,power, cmap='turbo'), label='($nT^2$/Hz)')
+    plt.colorbar(axs[1].pcolormesh(t,period,power,  norm=mcolors.LogNorm(vmin=10e-6, vmax=power[wh].max()),cmap='turbo'), label='($nT^2$/Hz)')
     return freqs, power
 
 
-def PSD(freqs, power, axs, plot=True):
+def PSD(freqs, power, plot=True, axs=None):
     psd = np.zeros(len(freqs))
     power = np.nan_to_num(power)
     for i in range(0, len(freqs)):
         psd[i] = (2/len(freqs)) * integrate.trapz(power[i, :], range(0, len(power[i,:])))
-    
-    peaks, _ = find_peaks(psd)
     period = (1/freqs)/60
-    # fund_period = period[psd.argmax()]
-    fund_period = 10.7
-    print('T:'+str(fund_period))
+    peaks, _ = find_peaks(psd,prominence=1e-3)
+    prominences = peak_prominences(psd, peaks)[0]
     
+    print(period[peaks])
+    print(prominences)
+    # fund_period = period[psd.argmax()]
+    fund_period = 10.7    
     if plot is True:
         fig, axs = plt.subplots()
     axs.loglog(period, psd)
+    axs.plot(period[peaks], psd[peaks], 'x')
     for i in range(1,5):
         axs.loglog([fund_period/i,fund_period/i],[np.min(psd),np.max(psd)],':', label='m='+str(i))
-    # axs.loglog([max_period,max_period],[np.min(psd),np.max(psd)],':', label='m='+str(1))
     axs.set_title('Power Spectral Density')
     axs.set_xlabel('Period (Hr)')
+    axs.set_xlim(xmax=period.max())
     axs.set_ylabel('PSD ($nT^2$/Hz)')
     axs.legend()
     
     
-def plots(axs, R_min=25, win=30, dt=15, n = None, start_time=None, end_time=None):
+# def plots(axs, R_min=25, win=30, dt=15, n = None, start_time=None, end_time=None):
     
-    # folder_path = '/home/cemaxim/CAS/CWTs/'
-    # if not os.path.exists(folder_path):
-    #     os.makedirs(folder_path)
+#     folder_path = '/home/cemaxim/CAS/CWTs/'
+#     if not os.path.exists(folder_path):
+#         os.makedirs(folder_path)
         
-    time , data, id = get_data(n,start_time,end_time)
-    # plot_orbit(data, id, R_min, n, time)
-    # plt.savefig(folder_path+str(n)+'_ORBIT')
-    mfa_data = MFA(data, win, R_min)
-    # MFA_plot(mfa_data)
-    CWT(mfa_data.B_PERP, dt, axs, n)    
-    # plt.savefig(folder_path+str(n)+'_CWT')
-    freqs , power = CWT(mfa_data.B_PERP, dt, axs, n, plot=False)
-    PSD(freqs,power,axs)
-    # plt.savefig(folder_path+str(n)+'_PSD')
+#     time , data, ids = get_data(n,start_time,end_time)
+#     plot_orbit(data, ids, R_min, n, time)
+#     plt.savefig(folder_path+str(n)+'_ORBIT')
+#     mfa_data = MFA(data, win, R_min)
+#     MFA_plot(mfa_data)
+#     CWT(mfa_data.B_PERP, dt, axs, n)    
+#     plt.savefig(folder_path+str(n)+'_CWT')
+#     freqs , power = CWT(mfa_data.B_PERP, dt, axs, n, plot=False)
+#     PSD(freqs,power,axs)
+#     plt.savefig(folder_path+str(n)+'_PSD')
 
-def subplots(R_min=25, win=30, dt=15, n = None, start_time=None, end_time=None):
-    time , data, id = get_data(n,start_time,end_time)
-    mfa = MFA(data, win, R_min)
-    
-    fig, ax = plt.subplots(3, layout='constrained', figsize = (9,6))
-    fig.suptitle('$b_\perp$ Wavelet Power Spectrum (Orbit '+str(n)+')')
-    freqs, power = CWT(mfa.B_PERP, 15, ax, plot=False)
-    
-    ax[1].sharex(ax[0])
-    # ax[1].tick_params(labelrotation=30)
-    ax[0].tick_params(labelbottom=False)
-    PSD(freqs, power, ax[2], plot=False)
 
 def model_wave(n,T1,T2,T3):
     data = get_data(n)[1]
@@ -367,9 +364,37 @@ def model_wave(n,T1,T2,T3):
     t = pd.date_range(time[0],time[1],freq='min')
     et = ((t.to_series() - t.min()).dt.total_seconds()).values/60
     y = np.sin(2*np.pi*f1*et) + 0.75*np.sin(2*np.pi*f2*et) + 0.5*np.sin(2*np.pi*f3*et)
-    #noise = np.zeros(len(y))
-    #noise = np.random.normal(0,1)
+    # noise = np.zeros(len(y))
+    # noise = np.random.normal(0,1)
     wave = pd.DataFrame(data=y,index=t)
     wave.plot()
     return wave
+
+
+def plots(R_min=25, win=60, dt=15, n = None, start_time=None, end_time=None):
+    time , data, ids = get_data(n,start_time,end_time)
+    mfa = MFA(data, win, R_min)
+    # plot_orbit(data, ids, R_min, n, time)
+    fig, ax = plt.subplots(3, layout='constrained', figsize = (9,6))
+    title = '$b_\perp$ Wavelet Power Spectrum '
+    if n:
+        title += 'Orbit '+str(n)
+    else:
+        title += '['+str(time[0])+' to '+str(time[1])+']'
+    fig.suptitle(title)
+    # fig.suptitle('$b_\perp$ Wavelet Power Spectrum (Orbit '+str(n)+')')
+    freqs, power = CWT(mfa.B_PERP, 15, plot=False, axs=ax)
+    ax[0].tick_params(labelbottom=False)
+    ax[1].sharex(ax[0])
+    locator = mdates.AutoDateLocator(minticks=5, maxticks=20)
+    formatter = mdates.ConciseDateFormatter(locator)
+    ax[1].xaxis.set_major_locator(locator)
+    ax[1].xaxis.set_major_formatter(formatter)
+    # ax[1].tick_params(labelrotation=30)
+
+    PSD(freqs, power, plot=False, axs=ax[2])
+    # plt.savefig('/home/cemaxim/CAS/CWTs/'+str(n)+'_CWT')
+    # plot_orbit(data, ids, R_min, n ,time, plot=False, axs=ax[3])
+
+
 
