@@ -9,7 +9,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.markers import MarkerStyle
 import matplotlib.dates as mdates
-import matplotlib.colors as mcolors
 import numpy as np
 from SPICE_POS import SPICE_POS
 from CAS_ORBITS import ORBIT
@@ -17,7 +16,11 @@ import pycwt as wavelet
 import os
 import scipy.integrate as integrate
 from scipy.signal import find_peaks
-from scipy.signal import peak_prominences
+from scipy import signal as sig
+import matplotlib.colors as mcolors
+from scipy import stats
+
+
 
 def get_data(orbit_n = None, start_time = None, end_time = None): 
     """
@@ -69,8 +72,35 @@ def get_data(orbit_n = None, start_time = None, end_time = None):
     data = SPICE_POS(mag_df,time)
     data = pd.merge_asof(data, ids, left_index=True, right_index=True, direction='backward')
     data.insert(0,'R',np.sqrt(data.x**2 + data.y**2 + data.z**2))
-    return time, data, ids
+    return time, data
 
+
+def bc_ids():
+    ids = pd.read_pickle('/home/cemaxim/pickles/BC_ID.pkl')
+    ids = ids.drop(ids.loc[ids.ID ==-2].index)
+    return ids
+
+def RPWS_data(time):
+    rpws = pd.read_pickle('/home/cemaxim/CAS/Codes/pickles/RPWS.pkl')
+    rpws = rpws[time[0] : time[1]]
+    return rpws
+
+def CAPS_data(time,R_min=25):
+    CAPS = pd.read_pickle('/home/cemaxim/CAS/Codes/pickles/CAPS.pkl')
+    CAPS = CAPS[time[0] : time[1]]
+    CAPS = CAPS.loc[(CAPS.R>R_min)]
+    return CAPS.density
+
+def MIMI_data(time):
+    MIMI = pd.read_pickle('/home/cemaxim/CAS/Codes/pickles/MIMI.pkl')
+    MIMI = MIMI[time[0] : time[1]]
+    return MIMI
+
+def date_format(axs):
+    locator = mdates.AutoDateLocator(minticks=5, maxticks=20)
+    formatter = mdates.ConciseDateFormatter(locator)
+    axs.xaxis.set_major_locator(locator)
+    axs.xaxis.set_major_formatter(formatter)
 
 def plot_orbit(data, ids, R_min, n, time, plot=True, axs=None):
     """
@@ -129,7 +159,8 @@ def save_orbits(n):
     folder_path = '/home/cemaxim/CAS/ORBITS'
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)    
-        time, data, ids = get_data(n)
+        time, data = get_data(n)
+        ids = bc_ids()
         plot_orbit(data,ids,25,n,time)     
         plt.savefig('/home/cemaxim/CAS/ORBITS/'+str(n))
 
@@ -151,7 +182,7 @@ def B_vs_R(data, R_min, win, start_time, end_time):
     axs[2].set_ylabel('$B_{\phi}$ (nT)')
 
 
-def MFA(data, win, R_min=None):
+def MFA(data, win=60, R_min=25):
     """
     Mean-field align magnetometer data.
 
@@ -216,56 +247,54 @@ def MFA_plot(mfa_data):
     axs[3].set_ylabel('Radial Distance ($R_S$)')
     fig.tight_layout()
 
+def get_B_PERP(n):
+    time, data = get_data(n)
+    mfa = MFA(data)
+    B_PERP = mfa.B_PERP
+    return B_PERP
 
-def CWT(data, dt, n=None, Rs=None, plot=True, axs=None):
+def get_B_PAR(n):
+    time, data = get_data(n)
+    mfa = MFA(data)
+    B_PAR = mfa.B_PAR
+    return B_PAR
+
+def downsample(signal, dt):
+    freq = str(dt)+'min'
+    signal = signal.asfreq(freq)
+    signal = signal.interpolate()
+    return signal    
+
+def CWT(signal, dt=15):
     """
     Performs a continuous wavelet transfrom anaylsis on a signal.
 
     Parameters
     ----------
-    data : pandas.core.series.Series
+    signal : pandas.core.series.Series
         Signal to analyze with datetime index.
-    n : int
-        Orbit number for plot title.
     dt : int
         Time interval in minutes between samples in singal.
-    Rs : TYPE, optional
-        DESCRIPTION. The default is None.
 
     Returns
     -------
-    freqs : numpy.ndarray
-        Frequencies range.
+    periods : numpy.ndarray
+        Periods range.
     power : numpy.ndarray
-        Power Spectrum.
+        2D power spectrum array.
 
     """
     freq = str(dt)+'min'
-    data = data.asfreq(freq)
-    data = data.interpolate()
-    t = data.index    
-    
-  
+    signal = signal.asfreq(freq,'bfill')
+    signal = signal.interpolate()
     Fs = 1/dt
-    N = len(data)
+    N = len(signal)
     f = np.arange(1,N/2)*Fs/N
-    
-    # omega0=6
-    # widths = omega0*Fs/(2*np.pi*f[1:])     
-    # cwtmatr = signal.cwt(data, signal.morlet2, widths, w = omega0)
-    # #cwtmatr, freqs = wavelet.cwt(data,widths,"cmor2.5-1.0", sampling_period = dt)
- 
-    # ha = plt.subplot(111)
-    # ha.pcolormesh(t,f,abs(cwtmatr[:,:-1])**2, cmap='turbo')
-    # ha.set_yscale('log')
-    # ha.set_ylim(f[1],f[-1])
-    # ha.set_xlabel('Time')
-    # ha.set_ylabel('Frequency [Hz]')
-    
+     
     mother = wavelet.Morlet(6)
-    wave, scales, freqs, coi, fft, fftfreqs = wavelet.cwt(data.values, dt, wavelet=mother, freqs = f) 
+    wave, scales, freqs, coi, fft, fftfreqs = wavelet.cwt(signal.values, dt, wavelet=mother, freqs = f) 
     power = np.abs(wave)**2
-    period = (1/freqs)/60 #hours
+    periods = (1/freqs)/60 #hours
     coi = coi**-1
     
     "Remove cone of infuluence"
@@ -275,83 +304,154 @@ def CWT(data, dt, n=None, Rs=None, plot=True, axs=None):
                                   key=lambda i: abs(freqs[i] - coi[col_num]))
             power[:coi_start_index, col_num] = np.zeros(coi_start_index)        
             power[power ==0]= 'nan'
-    # "Significance Test"
-    # alpha, _, _ = wavelet.ar1(data)
-    # signif, fft_theor = wavelet.significance(1.0, dt, scales, 0, alpha,
-    #                                      significance_level=0.95,
-    #                                      wavelet=mother)
-    # sig95 = np.ones([1, N]) * signif[:, None]
-    # sig95 = power / sig95
-    
-    if plot is True:
-        fig, axs = plt.subplots(2,1, sharex=True, figsize=(9,6), layout='constrained')
-        fig.supxlabel('Date-Time')
-        fig.suptitle('$b_\perp$ Wavelet Power Spectrum (Orbit '+str(n)+')')
-        plt.xticks(rotation=30, horizontalalignment='right')
-    axs[0].set_title('['+str(dt)+'-minute sampling interval]', fontsize=10)
-    axs[0].plot(t,data)
-    axs[0].set_ylabel('Magnitude (nT)')
-    # power = np.log(power)
-    wh =np.logical_not(np.isnan(power))
-    axs[1].pcolormesh(t,period,power, cmap = 'turbo')#, norm=mcolors.LogNorm(vmin=power[wh].min(), vmax=power[wh].max()), cmap='turbo')
-    #axs[1].contour(t,period,sig95)
-    axs[1].set_xlabel('Datetime')
-    axs[1].set_yscale('log')
-    axs[1].set_ylim(period.min(),period.max())
-    axs[1].set_ylabel('Period (hr)')
-    axs[1].plot([t.min(),t.max()],[10,10],'--', color='white',linewidth=0.25)
-    axs[1].plot([t.min(),t.max()],[10.7,10.7],'--', color='white',linewidth=1)
-    axs[1].plot([t.min(),t.max()],[15,15],'--',color='white',linewidth=0.25)
-    axs[1].plot([t.min(),t.max()],[30,30],'--',color='white',linewidth=0.25)
-    
-    plt.grid('--', linewidth=0.25)
-    plt.colorbar(axs[1].pcolormesh(t,period,power,  norm=mcolors.LogNorm(vmin=10e-6, vmax=power[wh].max()),cmap='turbo'), label='($nT^2$/Hz)')
-    return freqs, power
+    return signal, periods, power
 
+def CWT_plot(signal, axs=None):#title='$\delta$$b_\perp$ Wavelet Power Spectrum',
+    signal, periods, power = CWT(signal)
+    t = signal.index
+    if axs is None:
+        fig, axs = plt.subplots(1, figsize=(9,6), layout='constrained') 
+    # axs.set_title(title)
+    axs.pcolormesh(t,periods,power, cmap = 'turbo')
+    axs.set_xlabel('Datetime')
+    axs.set_yscale('log')
+    axs.set_ylim(periods.min(),periods.max())
+    axs.set_ylabel('Period (hr)',fontsize=8)
+    axs.plot([t.min(),t.max()],[10,10],'--', color='white',linewidth=0.25)
+    axs.plot([t.min(),t.max()],[10.7,10.7],'--', color='white',linewidth=1)
+    axs.plot([t.min(),t.max()],[15,15],'--',color='white',linewidth=0.25)
+    axs.plot([t.min(),t.max()],[30,30],'--',color='white',linewidth=0.25)
+    date_format(axs)
+    axs.grid('--', linewidth=0.25)
+    plt.colorbar(axs.pcolormesh(t,periods,power,cmap='turbo'))#,norm=mcolors.Normalize(vmin=10e-6, vmax=1)), label='($nT^2$/Hz)')
 
-def PSD(freqs, power, plot=True, axs=None):
-    psd = np.zeros(len(freqs))
+def pgram(signal, T_min, T_max):
+    '''
+    Generate Lomb-Scargle periodogram from signal.
+
+    Parameters
+    ----------
+    signal : pandas.core.series.Series
+        Signal to analyze with datetime index.
+    T_min/T_max : int
+        Min/max period for analysis.
+
+    Returns
+    -------
+    None.
+
+    '''
+    signal, periods, power = CWT(signal)
     power = np.nan_to_num(power)
-    for i in range(0, len(freqs)):
-        psd[i] = (2/len(freqs)) * integrate.trapz(power[i, :], range(0, len(power[i,:])))
-    period = (1/freqs)/60
-    peaks, _ = find_peaks(psd,prominence=1e-3)
-    prominences = peak_prominences(psd, peaks)[0]
+    t = signal.index.values
+    wh = np.where((periods>T_min) & (periods<T_max))[0]
+    p = power[wh]
+    p_T = p.T
+    mean = np.array([])
+    T = np.linspace(1,54,5000)
+    T = T*3.6e12
+    w = 2*np.pi/T
+    for i in range(0, len(p_T)):
+        mean = np.append(mean, p_T[i].mean())
+    pgram = sig.lombscargle(t,mean,w,normalize=True)
+    fig,axs = plt.subplots(3, layout = 'constrained')
+    axs[0].pcolormesh(t,periods[wh],p,vmax=0.05)
+    axs[0].grid(axis='x',linestyle='--',alpha=0.5)
+    axs[0].set_ylabel('Period(hr)')
+    axs[1].plot(t,mean)
+    axs[1].set_ylabel('Power ($nT^2$/Hz)')
+    date_format(axs[1])
+    axs[1].grid(axis='x',linestyle='--',alpha=0.5)
+    axs[0].sharex(axs[1])
+    axs[0].tick_params(labelbottom=False)
+    axs[2].plot(T/3.6e12,pgram)
+    axs[2].set_ylabel('PSD')
+    axs[2].set_xlabel('Period (hr)')
+    axs[2].minorticks_on()
+    axs[2].set_title('Lomb-Scargle Periodogram')
     
-    print(period[peaks])
-    print(prominences)
-    # fund_period = period[psd.argmax()]
+def find_nearest(array, value):
+        array = np.asarray(array)
+        idx = (np.abs(array - value)).argmin()
+        return array[idx]
+    
+def lin_corr(signal_a,signal_b):
+    
+    # signals = [signal_a,signal_b]
+    # for i in signals:
+    #     signal, periods, power = CWT(i)
+    #     wh = np.where(periods == find_nearest(periods,1))[0]
+    #     p = power[wh]
+    #     t = signal.index
+        
+    signal_a, periods_a, power_a = CWT(signal_a)
+    signal_b, periods_b, power_b = CWT(signal_b)
+    wh_a = np.where(periods_a == find_nearest(periods_a,3))[0]
+    wh_b = np.where(periods_b == find_nearest(periods_b,3))[0]
+    p_a = np.nan_to_num(power_a[wh_a])
+    p_b = np.nan_to_num(power_b[wh_b])
+    t_a = signal_a.index
+    t_b = signal_b.index
+    fig, axs = plt.subplots(2,sharex=True)
+    axs[0].plot(t_a,p_a[0])
+    axs[0].set_yscale('log')
+
+    axs[0].plot(t_b,p_b[0])
+    axs[0].set_yscale('log')
+    date_format(axs[1])
+    coeff = stats.pearsonr(p_a[0,0:1000],p_b[0,0:1000])
+    print (coeff)
+    
+   
+     
+def PSD(signal, plot=True, axs=None):
+    signal, periods, power = CWT(signal)
+    psd = np.zeros(len(periods))
+    power = np.nan_to_num(power)
+    for i in range(0, len(periods)):
+        psd[i] = (2/len(periods)) * integrate.trapz(power[i, :], range(0, len(power[i,:])))
+    peaks, _ = find_peaks(psd,prominence=1e-2)
+    # prominences = peak_prominences(psd, peaks)[0]
+    
+    # print(period[peaks])
+    # print(prominences)
     fund_period = 10.7    
     if plot is True:
         fig, axs = plt.subplots()
-    axs.loglog(period, psd)
-    axs.plot(period[peaks], psd[peaks], 'x')
-    for i in range(1,5):
-        axs.loglog([fund_period/i,fund_period/i],[np.min(psd),np.max(psd)],':', label='m='+str(i))
-    axs.set_title('Power Spectral Density')
-    axs.set_xlabel('Period (Hr)')
-    axs.set_xlim(xmax=period.max())
-    axs.set_ylabel('PSD ($nT^2$/Hz)')
-    axs.legend()
-    
-    
-# def plots(axs, R_min=25, win=30, dt=15, n = None, start_time=None, end_time=None):
-    
-#     folder_path = '/home/cemaxim/CAS/CWTs/'
-#     if not os.path.exists(folder_path):
-#         os.makedirs(folder_path)
-        
-#     time , data, ids = get_data(n,start_time,end_time)
-#     plot_orbit(data, ids, R_min, n, time)
-#     plt.savefig(folder_path+str(n)+'_ORBIT')
-#     mfa_data = MFA(data, win, R_min)
-#     MFA_plot(mfa_data)
-#     CWT(mfa_data.B_PERP, dt, axs, n)    
-#     plt.savefig(folder_path+str(n)+'_CWT')
-#     freqs , power = CWT(mfa_data.B_PERP, dt, axs, n, plot=False)
-#     PSD(freqs,power,axs)
-#     plt.savefig(folder_path+str(n)+'_PSD')
+    if axs is not None or plot is True:
+        axs.loglog(periods, psd)
+        # axs.plot(period[peaks], psd[peaks], 'x')
+        for i in range(1,5):
+            axs.loglog([fund_period/i,fund_period/i],[np.min(psd),np.max(psd)],':', label='m='+str(i))
+        axs.set_title('Power Spectral Density')
+        axs.set_xlabel('Period (Hr)')
+        axs.set_xlim(xmax=periods.max())
+        axs.set_ylabel('PSD ($nT^2$/Hz)')
+        axs.legend()
+    return psd
 
+def peaks_hist(axs=None):
+    orbs = [24,25,26,27,28,29,30,33,36,37,112,113,114,119]
+    a = np.array([])
+    for i in enumerate(orbs):
+        time, data = get_data(i[1])
+        mfa = MFA(data,60,25)
+        signal, periods, power = CWT(mfa.B_PERP, 15)
+        psd = PSD(signal, plot=False, axs=axs[i[0]])
+        peaks, _ = find_peaks(psd,prominence=1e-2)
+        peaks = periods[peaks]
+        peaks = peaks[peaks < 50]
+        a = np.concatenate([a,peaks])
+    # np.save('/home/cemaxim/CAS/Codes/peaks',a)
+    # a = np.load('/home/cemaxim/CAS/Codes/peaks.npy')
+    fig, axs = plt.subplots()
+    bins = np.arange(0,50)
+    axs.hist(a, bins)#, log=True)
+    axs.minorticks_on()
+    axs.set_xlabel('Period (Hr)')
+    axs.set_ylabel('Counts')
+    axs.yaxis.set_tick_params(which='minor',left=False)
+    
 
 def model_wave(n,T1,T2,T3):
     data = get_data(n)[1]
@@ -372,29 +472,72 @@ def model_wave(n,T1,T2,T3):
 
 
 def plots(R_min=25, win=60, dt=15, n = None, start_time=None, end_time=None):
-    time , data, ids = get_data(n,start_time,end_time)
+    time , data = get_data(n,start_time,end_time)
     mfa = MFA(data, win, R_min)
-    # plot_orbit(data, ids, R_min, n, time)
-    fig, ax = plt.subplots(3, layout='constrained', figsize = (9,6))
-    title = '$b_\perp$ Wavelet Power Spectrum '
-    if n:
+    signal = mfa.B_PERP
+    signal_ds = downsample(signal,dt)
+    fig, ax = plt.subplots(2, sharex = True, layout='constrained', figsize = (9,6))
+    title = '$\delta$$b_\perp$ '
+    if n is not None:
         title += 'Orbit '+str(n)
     else:
         title += '['+str(time[0])+' to '+str(time[1])+']'
-    fig.suptitle(title)
-    # fig.suptitle('$b_\perp$ Wavelet Power Spectrum (Orbit '+str(n)+')')
-    freqs, power = CWT(mfa.B_PERP, 15, plot=False, axs=ax)
-    ax[0].tick_params(labelbottom=False)
-    ax[1].sharex(ax[0])
-    locator = mdates.AutoDateLocator(minticks=5, maxticks=20)
-    formatter = mdates.ConciseDateFormatter(locator)
-    ax[1].xaxis.set_major_locator(locator)
-    ax[1].xaxis.set_major_formatter(formatter)
-    # ax[1].tick_params(labelrotation=30)
-
-    PSD(freqs, power, plot=False, axs=ax[2])
+    ax[0].plot(signal_ds.index,signal_ds)
+    ax[0].set_title(title)
+    CWT_plot(signal,axs=ax[1])
     # plt.savefig('/home/cemaxim/CAS/CWTs/'+str(n)+'_CWT')
     # plot_orbit(data, ids, R_min, n ,time, plot=False, axs=ax[3])
 
 
+def CAPS_CWT():
+    time = ORBIT(114)
+    caps = CAPS_data(time)
+    B_PERP = get_B_PERP(114)
+    fig, axs = plt.subplots(3,sharex=True,layout='constrained',figsize=(8,5))
+    fontsize = 8
+    axs[0].plot(caps*10e-3,linewidth=0.4)
+    axs[0].set_yscale('log')
+    axs[0].set_ylabel('Electron Density ($m^{-3}$)',fontsize=fontsize)
+    CWT_plot(B_PERP,axs=axs[2])
+    axs[1].plot(B_PERP,linewidth=0.4)
+    axs[1].set_ylabel('$\delta$$b_\perp$ Magnitude (nT)',fontsize=fontsize)
+    # axs[1].set_title('$\delta$$b_\perp$')
+    # axs[0].set_title('CAPS Electron Density')
 
+def pgrams():
+    orbs = [24,25,26,27,28,29,30,33,36,37,112,113,114,119]
+    for i in orbs:
+        B_PERP = get_B_PERP(i)
+        pgram(B_PERP,0,1)
+        # plt.savefig('/home/cemaxim/CAS/CWTs/db_perp/'+str(i)+'_pgram')
+        
+def mag_vs_den():
+    B_PERP = get_B_PERP(114)
+    e_DENS = CAPS_data(ORBIT(114))
+    x = pd.merge_asof(B_PERP,e_DENS,left_index=True, right_index=True, direction='backward')
+    a = x.B_PERP.rolling(50,center=True).mean()
+    a = a.dropna()
+    b = x.density.rolling(50,center=True).mean()
+    b = b.dropna()
+    # peaks_a, _ = find_peaks(a,prominence=0.)
+    # peaks_b, _ = find_peaks(b,prominence=2)
+    fig, axs = plt.subplots(2,sharex=True)
+    axs[0].plot(a)
+    # axs[0].plot(a.iloc[peaks_a],'x')
+    # axs[1].plot(x.density,alpha=0.5)
+    # axs[1].plot(b.iloc[peaks_b],'x')
+    axs[1].plot(b)
+    axs[1].set_yscale('log')
+    date_format(axs[1])
+    corr = stats.pearsonr(a,b)
+    print(corr)
+
+def data_plots():
+    CAPS = CAPS_data(ORBIT(114))
+    MIMI = MIMI_data(ORBIT(114))
+    fig,axs = plt.subplots(2,sharex=True)
+    axs[0].plot(CAPS)
+    axs[0].set_yscale('log')
+    axs[1].plot(MIMI.A0)
+    axs[1].set_yscale('log')
+    date_format(axs[1])
