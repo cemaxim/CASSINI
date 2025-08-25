@@ -729,3 +729,20 @@ def cpsd_data(n,win):
     dN = MFA_CAPS(density)
     # dB,dN = align(dB,dN)
     return dB, dN
+    
+def phase_hist():
+    orbs = [24,25,26,27,28,29,30,33,36,37,112,113,114,119]
+    x = np.array([])
+    
+    for n in orbs:
+        signal_a,signal_b = cpsd_data(n,30)
+        T,Cxy,phase = cpsd(signal_a.B_PAR,signal_b,12,1/60)
+        wh = np.where(T<4 and T>2)
+        wh = np.where(Cxy>0.5)
+        y = phase[wh]
+        x = np.concatenate([x,y])
+    fig,axs = plt.subplots()
+    bins = np.linspace(0,1,20)
+    axs.hist(x,bins)
+    print(x)
+
